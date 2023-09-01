@@ -8,8 +8,8 @@
 /build/
 
 # Libraries
-/lib/
-!/lib/anforaloader/include/
+/lib/detours/*
+/lib/anforaloader/x86/*
 
 # Misc
 /assets/
