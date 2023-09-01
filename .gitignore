@@ -1,0 +1,16 @@
+# IDEs
+/.vs/
+/.vscode/
+/.idea/
+
+# Build
+/bin/
+/build/
+
+# Libraries
+/lib/
+!/lib/anforaloader/include/
+
+# Misc
+/assets/
+*.bak
