@@ -79,7 +79,7 @@ _ANFORA_DECL AnforaModInfo _AnModInfo = {$name, $description}
 
 // Make hook function name
 #define anfora_hook($name, $addr, $module) \
-_ANFORA_CAT(_ANFORA_CAT($$anfora_hook$##$addr##$, _ANFORA_MODULEID($module)), $$)
+_ANFORA_CAT(_ANFORA_CAT($$anfora_hook$ ## $addr ## $, _ANFORA_MODULEID($module)), $$ ## $name)
 
 // Get target of hook with raw type
 #define anfora_raw_target($type, $addr, $module, ...) \
