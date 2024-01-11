@@ -1,4 +1,4 @@
-#include "anforaapi.hpp" // Anfora API to create hooks and define required data
+#include "anfora/api.hpp" // Anfora API
 
 #include "faktum/faktum.hpp" // Includes all Faktum headers at once
 #include "cm2/cm2.hpp" // Includes all CM2 headers at once
@@ -6,89 +6,108 @@
 
 /*
 	anfora_mod(<Name>, <Description>);
-	<Name>: Mod name (const wchar_t*)
-	<Description>: Mod description (const wchar_t*)
+	Name:			Mod name (const wchar_t*)
+	Description:	Mod description (const wchar_t*)
 
-	Strictly required to create a mod
-	Defines and exports internal symbols, make sure to use it in a single .cpp file in your project
+	Defines core mod information
+
+	Must be used once in a single translation unit to make the mod loadable
 */
 anfora_mod(L"Example Mod", L"This is the mod description");
 
+
 /*
-	(bool) anfora_init { <Code> }
+	(bool) anfora_init() { ... }
 
- 	`anfora_init` is executed upon mod initialization, before hooks are attached
-	Returning `true` tells to continue loading the mod normally
-	Returning `false` causes Anfora to stop loading the mod (hooks will not be attached and the library will be unloaded)
-	Global objects construction, mod config initialization and such should be done here
+ 	Optional mod initialization function that is executed before hooks installation
+
+	Returning `false` causes Anfora to destruct the mod and unload its library
+
+	Global objects construction, mod config management and such should be done here
 */
-anfora_init {
+anfora_init() {
 
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Hello Anfora!\n");
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Hello Anfora!\n");
 
 	return true;
 
 }
 
 /*
-	(void) anfora_exit { <Code> }
+	(void) anfora_exit() { ... }
 
- 	`anfora_exit` is executed upon mod destruction, after hooks are detached
-	Mod destruction also happens `anfora_init` returns false
+ 	Optional mod destruction function that is executed after hooks are detached and on mod initialization failure
+
 	Global objects destruction and such should be done here
 */
-anfora_exit {
+anfora_exit() {
 
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Bye Anfora!\n");
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Bye Anfora!\n");
 
 }
+
 
 /*
 	anfora_export
 
-	Attribute used to export hooks, semantics follow `__declspec(dllexport)`
-*/
-/*
-	anfora_hook(<Name>, <Address>, <Module>)
-	<Name>: Acts as annotation but affects the symbol
-	<Address>: Target function address
-	<Module>: Target module (either `cm2` or `faktum`)
+	Alias to `__declspec(novtable)`
 
-	Use over the standard function name to define a hook function
-	A hook function will be called instead of the target function when it gets called
-	To call the original function back use `anfora_target` or `anfora_raw_target` depending on your needs
+	Useful for hook classes
 */
-anfora_export BOOL __fastcall anfora_hook(CM2GameInit, 0x213D0, cm2)(CM2Game* self, void* edx) {
+class anfora_novtable HookCM2Game : public CM2Game {
 
-	FtGetTextDevice()->Log(FTextDevice::Raw, L"Initializing CM2Game\n");
+public:
 
 	/*
-		anfora_target(<Function>, <Address>, <Module>, <Arguments...>)
-		<Function>: Address of original function
-		<Address>: Target function address (same as current hook)
-		<Module>: Target module (same as current hook)
-		<Arguments...>: Call arguments
+		anfora_export
 
-		Calls the original function that the hook with the params specified replace
+		Alias to `__declspec(dllexport)`
 	*/
-	return anfora_target(&CM2Game::Init, 0x213D0, cm2, self);
+	/*
+		... anfora_hook(<Name>, <Address>, <Module>, <Arguments...>) { ... }
+		Name:		Name of the hook (to avoid conflicts)
+		Address:	Target function address
+		Module:		Target module (`cm2` or `faktum`)
+		Arguments:	Function arguments
 
-}
+		Defines a function hook that will be called over the target function
+	*/
+	anfora_export BOOL __fastcall anfora_hook(Init, 0x213D0, cm2) {
 
+		FtGetTextDevice()->Log(FTextDevice::FMT_ABOVE_WARNING, L"Initializing CM2Game\n");
 
-anfora_export void __fastcall anfora_hook(CM2RendererInit, 0x397F0, cm2)(void* self, void* edx, FGame* game) {
+		/*
+			anfora_target(<Function>, <Address>, <Module>, <Arguments...>)
+			Function:	Address of target function
+			Address:	Target function address
+			Module:		Target module
+			Arguments:	Call arguments
 
-	FtGetTextDevice()->Log(FTextDevice::Raw, L"Initializing CM2Renderer\n");
+			Calls the original function that the hook with the params specified replaced
+
+			In case of overlapping hooks, the next function hook with the same target and module in the node will be executed
+		*/
+		return anfora_target(&CM2Game::Init, 0x213D0, cm2, this);
+
+	}
+
+};
+
+/*
+	... anfora_uhook(<Address>, <Module>, <Arguments...>) { ... }
+
+	Same as `anfora_hook` but the function is unnamed (might cause conflicts)
+*/
+anfora_export void __fastcall anfora_uhook(0x397F0, cm2, void* self, void* edx, FGame* game) {
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_ABOVE_WARNING, L"Initializing CM2Renderer\n");
 
 	/*
 		anfora_raw_target(<Type>, <Address>, <Module>, <Arguments...>)
-		<Type>: Raw original function type
-		<Address>: Target function address (same as current hook)
-		<Module>: Target module (same as current hook)
-		<Arguments...>: Call arguments
 
-		Same as `anfora_target` but with raw function type
-		Useful when the original function is not in the reference
+		Acts the same as `anfora_target` but with raw target function type is specified
+
+		Useful for undefined functions
 	*/
 	anfora_raw_target(void(__thiscall*)(void* self, FGame* game), 0x397F0, cm2, self, game);
 

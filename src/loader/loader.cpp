@@ -1,82 +1,58 @@
 #include "loader.hpp"
 
-#include "anforaapi.hpp"
-#include "hook.hpp"
-#include "mod.hpp"
+#include "detours.h"
 
 #include <filesystem>
 
 
-Work work;
+bool Loader::init() {
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Initializing Anfora...\n");
 
 
-__declspec(dllexport) bool _AnfInit();
-__declspec(dllexport) void _AnfExit();
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Loading game library modules\n");
 
-static void _AnfFreeLibrary(HMODULE module);
+	for (size_t i = 0; const auto& name : ModuleNames) {
 
-
-static constexpr const wchar_t* LogSeparator = L"================================================================================\n";
-
-
-__declspec(dllexport) bool _AnfInit() {
-
-	FtGetTextDevice()->Log(FTextDevice::Raw, LogSeparator);
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Initializing Anfora\n");
-
-
-	// Get all hookable modules handles and base addresses (which in this case are the same, but kept separate for consistency)
-
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Loading modules information\n");
-
-	for (int i = 0; i < ModulesCount; i++) {
-
-		HMODULE handle = GetModuleHandleW(ModulesNames[i]);
+		HMODULE handle = GetModuleHandleW(name);
 
 		if (!handle) {
 
-			FtGetTextDevice()->Logf(FTextDevice::Critical, L"Failed to get module handle of '%s'\n", ModulesNames[i]);
+			FtGetTextDevice()->Logf(FTextDevice::FMT_CRITICAL, L"Failed to get handle of module '%ls'\n", name);
 
 			return false;
 
 		}
 
-		work.modulesHandles[i] = handle;
-		work.baseAddresses[i] = reinterpret_cast<uintptr_t>(handle);
+		modules[i++] = handle;
 
 	}
 
 
-	// Create mods folder if missing
+	std::filesystem::path modsDirectory("./mods/");
 
-	std::filesystem::path modsDir("./mods/");
+	if (!std::filesystem::exists(modsDirectory)) {
 
-	if (!std::filesystem::exists(modsDir)) {
+		FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"First time startup, nothing to load\n");
 
-		FtGetTextDevice()->Log(FTextDevice::Init, L"First time startup, no mods to load\n");
+		if (!std::filesystem::create_directory(modsDirectory)) {
 
-		if (!std::filesystem::create_directory(modsDir)) {
-
-			FtGetTextDevice()->Log(FTextDevice::Critical, L"Failed to create mods folder\n");
+			FtGetTextDevice()->Log(FTextDevice::FMT_CRITICAL, L"Failed to create mods folder\n");
 
 			return false;
 
 		}
 
-		FtGetTextDevice()->Log(FTextDevice::Init, L"Anfora initialized\n");
-		FtGetTextDevice()->Log(FTextDevice::Raw, LogSeparator);
+		FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Anfora initialized\n");
 
 		return true;
 
 	}
 
 
-	// Load mods dlls, get core symbols (mod init, mod exit, mod module, mod info) and get all hooks
-	// All loaded mods get added to the work.mods map with the module handle as key
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Loading mods\n");
 
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Begin mods loading\n");
-
-	for (const auto& entry : std::filesystem::directory_iterator(modsDir)) {
+	for (const auto& entry : std::filesystem::directory_iterator(modsDirectory)) {
 
 		if (!entry.is_regular_file()) {
 			continue;
@@ -85,13 +61,13 @@ __declspec(dllexport) bool _AnfInit() {
 		const auto& path = entry.path();
 
 
-		FtGetTextDevice()->Logf(FTextDevice::Init, L"Loading '%ls'\n", path.wstring().c_str());
+		FtGetTextDevice()->Logf(FTextDevice::FMT_INIT, L"Loading '%ls'\n", path.wstring().c_str());
 
 		HMODULE module = LoadLibraryW(path.wstring().c_str());
 
 		if (!module) {
 
-			FtGetTextDevice()->Log(FTextDevice::Error, L"Failed to load mod DLL\n");
+			FtGetTextDevice()->Log(FTextDevice::FMT_ERROR, L"Failed to load DLL\n");
 
 			continue;
 
@@ -102,135 +78,279 @@ __declspec(dllexport) bool _AnfInit() {
 
 		if (!mod.load(module)) {
 
-			_AnfFreeLibrary(module);
+			freeLibrary(module);
 
-			for (const auto& pair : work.mods) {
-
-				_AnfFreeLibrary(pair.first);
-
-			}
-
-			return false;
+			continue;
 
 		}
 
-		work.mods[module] = mod;
+		mods[module] = mod;
 
 	}
 
 
-	// Initialize mods by calling their init function (if exists), if one fails unload the mod
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Initializing mods\n");
 
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Initializing mods\n");
+	for (const auto& [module, mod] : mods) {
 
-	for (const auto& [module, mod] : work.mods) {
+		FtGetTextDevice()->Logf(FTextDevice::FMT_INIT, L"Initializing '%ls'\n", mod.info->name);
 
-		FtGetTextDevice()->Logf(FTextDevice::Init, L"Initializing '%ls'\n", mod.info->name);
 
-		if (!mod.initMod()) {
+		if (!mod.init()) {
 
-			FtGetTextDevice()->Logf(FTextDevice::Error, L"Failed to initialize '%ls'\n", mod.info->name);
+			FtGetTextDevice()->Logf(FTextDevice::FMT_ERROR, L"Failed to initialize mod\n");
 
-			mod.exitMod();
+			mod.exit();
 
-			_AnfFreeLibrary(module);
+			freeLibrary(module);
 
-			work.failedMods.push_back(module);
+			failedMods.emplace_back(module);
 
 		}
 
 	}
 
-	if (!work.failedMods.empty()) {
-		FtGetTextDevice()->Logf(FTextDevice::Warning, L"%i Mods failed initialization\n", work.failedMods.size());
+	if (!failedMods.empty()) {
+
+		size_t count = failedMods.size();
+
+		FtGetTextDevice()->Logf(FTextDevice::FMT_WARNING, L"%i/%i Mods failed initialization\n", count, count + mods.size());
+
 	}
 
-	for (const auto& module : work.failedMods) {
-		work.mods.erase(module);
+	for (const auto& module : failedMods) {
+		mods.erase(module);
 	}
 
 
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Attaching hooks\n");
+	if (!mods.empty()) {
 
-	for (auto& [module, mod] : work.mods) {
+		FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Searching hooks\n");
 
-		FtGetTextDevice()->Logf(FTextDevice::Init, L"Attaching '%ls'\n", mod.info->name);
+		for (const auto& [module, mod] : mods) {
 
-		if (!mod.attachHooks()) {
-			return false;
+			size_t count = appendHooks(mod);
+
+			FtGetTextDevice()->Logf(FTextDevice::FMT_INIT, L"Found %d hooks in '%ls'\n", count, mod.info->name);
+
 		}
 
 	}
 
 
-	FtGetTextDevice()->Log(FTextDevice::Init, L"Anfora initialized\n");
-	FtGetTextDevice()->Log(FTextDevice::Raw, LogSeparator);
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Anfora initialized\n");
 
 	return true;
 
 }
 
-__declspec(dllexport) void _AnfExit() {
+bool Loader::install() {
 
-	FtGetTextDevice()->Log(FTextDevice::Raw, LogSeparator);
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Shutting down Anfora\n");
+	if (mods.empty() || nodes.empty()) {
+
+		FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"No hooks to install\n");
+
+		return true;
+
+	}
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Installing hooks...\n");
+
+	if (!attachHooks()) {
+		return false;
+	}
 
 
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Detaching hooks\n");
+	FtGetTextDevice()->Log(FTextDevice::FMT_INIT, L"Hooks installed\n");
 
-	for (auto& [module, mod] : work.mods) {
+	return true;
 
-		FtGetTextDevice()->Logf(FTextDevice::Exit, L"Detaching '%ls'\n", mod.info->name);
+}
 
-		mod.detachHooks();
+void Loader::exit() {
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Shutting down Anfora...\n");
+
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Detaching hooks\n");
+
+	detachHooks();
+
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Exiting mods\n");
+
+	for (auto& [module, mod] : mods) {
+
+		FtGetTextDevice()->Logf(FTextDevice::FMT_EXIT, L"Exiting '%ls'\n", mod.info->name);
+
+		mod.exit();
 
 	}
 
 
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Exiting mods\n");
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Unloading mods\n");
 
-	for (auto& [module, mod] : work.mods) {
+	for (auto& [module, mod] : mods) {
 
-		FtGetTextDevice()->Logf(FTextDevice::Exit, L"Exiting '%ls'\n", mod.info->name);
+		FtGetTextDevice()->Logf(FTextDevice::FMT_EXIT, L"Unloading '%ls'\n", mod.info->name);
 
-		mod.exitMod();
-
-	}
-
-
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Unloading mods\n");
-
-	for (auto& [module, mod] : work.mods) {
-
-		FtGetTextDevice()->Logf(FTextDevice::Exit, L"Unloading '%ls'\n", mod.info->name);
-
-		_AnfFreeLibrary(module);
+		freeLibrary(module);
 
 	}
 
-	work.mods.clear();
+	mods.clear();
 
 
-	FtGetTextDevice()->Log(FTextDevice::Exit, L"Anfora shut down\n");
-	FtGetTextDevice()->Log(FTextDevice::Raw, LogSeparator);
+	FtGetTextDevice()->Log(FTextDevice::FMT_EXIT, L"Anfora shut down\n");
 
 }
 
 
-static void _AnfFreeLibrary(HMODULE module) {
+void* Loader::getHookTarget(const Anfora::ModInfo& info, uintptr_t address, unsigned int moduleID) {
 
-	if (!FreeLibrary(module)) {
+	const auto& mod = mods[info.module];
 
-		FtGetTextDevice()->Log(FTextDevice::Error, L"Failed to free library, attempting unmap\n");
+	if (moduleID < ModuleCount) {
 
-		if (!UnmapViewOfFile(module)) {
+		address += reinterpret_cast<uintptr_t>(modules[moduleID]);
 
-			FtGetTextDevice()->Log(FTextDevice::Error, L"Failed to unmap library\n");
+		if (nodes.contains(address)) {
+			return nodes.at(address).next().target;
+		}
 
-			// Nothing can be done at this point
+	}
+
+	const wchar_t* module = (moduleID < ModuleCount) ? ModuleNames[moduleID] : L"<unknown>";
+
+	FtGetTextDevice()->Logf(FTextDevice::FMT_CRITICAL, L"Failed to get target of unexisting hook %ls!0x%08x\n", module, address);
+
+	return nullptr;
+
+}
+
+
+size_t Loader::appendHooks(const Mod& mod) {
+
+	struct EnumerateContext {
+
+		const Mod& mod;
+		Loader& loader;
+
+		size_t count;
+
+	};
+
+	EnumerateContext context(mod, *this, 0);
+
+	DetourEnumerateExports(mod.info->module, &context, [](PVOID pContext, ULONG nOrdinal, LPCSTR pszName, PVOID pCode) -> BOOL {
+
+		auto* context = static_cast<EnumerateContext*>(pContext);
+
+
+		uintptr_t address;
+		unsigned int moduleID;
+
+		int count = std::sscanf(pszName, "%*[^$]$$anfora_hook$%x$%u$$%*s", &address, &moduleID);
+
+		if (count < 2) {
+			return true;
+		}
+
+
+		if (moduleID >= ModuleCount) {
+
+			FtGetTextDevice()->Logf(FTextDevice::FMT_WARNING, L"Hook <unknown>!%08X is invalid ('%ls')\n", address, context->mod.info->name);
+
+			return true;
 
 		}
 
+
+		address += reinterpret_cast<uintptr_t>(context->loader.modules[moduleID]);
+
+		Hook hook(reinterpret_cast<void*>(address), pCode, context->mod.info->module);
+
+		context->loader.nodes[address].append(hook);
+
+		context->count++;
+
+		return true;
+
+	});
+
+	return context.count;
+
+}
+
+bool Loader::attachHooks() {
+
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+
+	for (auto& [target, node] : nodes) {
+
+		FtGetTextDevice()->Logf(FTextDevice::FMT_INIT, L"Attaching node 0x%08X\n", target);
+
+		node.sort();
+
+		for (auto& hook : node.hooks) {
+
+			if (DetourAttach(&hook.target, hook.function) == NO_ERROR) {
+				continue;
+			}
+
+			FtGetTextDevice()->Logf(FTextDevice::FMT_CRITICAL, L"Failed to attach hook (source '%ls')\n", target, mods[hook.source].info->name);
+
+			DetourTransactionAbort();
+
+			return false;
+
+		}
+
+	}
+
+	if (DetourTransactionCommit() != NO_ERROR) {
+
+		FtGetTextDevice()->Log(FTextDevice::FMT_CRITICAL, L"Failed to commit detour transaction\n");
+
+		return false;
+
+	}
+
+	return true;
+
+}
+
+void Loader::detachHooks() {
+
+	DetourTransactionBegin();
+	DetourUpdateThread(GetCurrentThread());
+
+	for (auto& [target, node] : nodes) {
+
+		FtGetTextDevice()->Logf(FTextDevice::FMT_INIT, L"Detaching from target 0x%08X\n", target);
+
+		for (auto& hook : node.hooks) {
+			DetourDetach(&hook.target, hook.function);
+		}
+
+	}
+
+	DetourTransactionCommit();
+
+}
+
+
+void Loader::freeLibrary(HMODULE module) {
+
+	if (FreeLibrary(module)) {
+		return;
+	}
+
+	FtGetTextDevice()->Log(FTextDevice::FMT_ERROR, L"Failed to free library, attempting unmap\n");
+
+	if (!UnmapViewOfFile(module)) {
+		FtGetTextDevice()->Log(FTextDevice::FMT_ERROR, L"Failed to unmap library\n");
 	}
 
 }

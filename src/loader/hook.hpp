@@ -1,47 +1,61 @@
 #pragma once
 
+#include <compare>
 #include <vector>
+#include <unordered_map>
+#include <algorithm>
 
 
 struct Hook {
 
-	constexpr auto operator<=>(const Hook& h) const {
-		return priority <=> h.priority;
+	constexpr Hook(void* target, void* function, HMODULE source) : target(target), function(function), source(source) {}
+
+
+	constexpr auto operator<=>(const Hook& other) const {
+		return priority <=> other.priority;
 	}
 
 
 	void* target;
-	void* detour;
+	void* function;
 
-	int priority;
+	unsigned int priority;
+
+	HMODULE source;
 
 };
 
-struct HooksNode {
+struct HookNode {
 
-	constexpr void* getNextTarget() {
+	constexpr Hook& next() {
 
-		if (targetIndex-- == 0) {
-			targetIndex = hooks.size() - 1;
+		if (index-- == 0) {
+			index = hooks.size() - 1;
 		}
 
-		return hooks[targetIndex].target;
+		return hooks[index];
 
 	}
 
-	constexpr void appendHook(Hook hook) {
+	constexpr void append(Hook hook) {
 
 		if (!hooks.empty()) {
-			hook.target = hooks.back().detour;
+			hook.target = hooks.back().function;
 		}
 
-		hooks.push_back(hook);
+		hooks.emplace_back(hook);
 
 	}
 
+	constexpr void sort() {
+		std::sort(hooks.begin(), hooks.end());
+	}
 
-	size_t targetIndex = 0;
 
 	std::vector<Hook> hooks;
 
+	size_t index;
+
 };
+
+using HookMap = std::unordered_map<uintptr_t, HookNode>;

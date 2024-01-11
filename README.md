@@ -1,5 +1,5 @@
 # Anfora
-### Modloader *attempt* for the 2007 PC Game Crazy Machines 2
+### ModLoader *attempt* for the 2007 PC Game Crazy Machines 2
 
 ## Building
 
@@ -31,8 +31,8 @@ Refer to the CMake `example-mod` target and to the source `src/example-mod/mod.c
 Once your mod is built, copy it into the `mods` folder (gets created after first `anfora.exe` startup).
 
 ## Important notes
-This modloader is not meant to be stable, it was born as a tool to help reverse engineering the game with a single mod loaded.
+This modloader is not meant to be stable, it was born as a tool to help reverse engineer the game with a single mod loaded.
 
-Currently common things such has multiple mods hooking into the same place and probably other things I am not aware of are undefined.
+There are most likely specific cases left undefined that I am not aware of.
 
-The state of the project might change later on, but as of now I am doing it out of fun without the objective of being that usable to users.
+The state of the project might change later on, but as of now I am doing it out of fun without the objective of proper stability.

@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.5)
 
-project("anfora")
+project("Anfora ModLoader")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MD")
@@ -9,6 +9,8 @@ set(BINARY_OUTPUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bin/${CMAKE_BUILD_TYPE})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${BINARY_OUTPUT_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${BINARY_OUTPUT_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BINARY_OUTPUT_DIR})
+
+add_compile_definitions(_CRT_SECURE_NO_WARNINGS) # _fpcontrol & std::sscanf
 
 
 # Sources
